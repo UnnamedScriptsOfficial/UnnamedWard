@@ -2,17 +2,43 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
-local Camera = Workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
 
 local Config = {
-    ESP = { Enabled = true, Rainbow = true, Thickness = 1.5, CornerLength = 8, ShowNames = true, ShowDistance = true, ShowHealth = true },
-    Tracker = { Enabled = true, Rainbow = true, Thickness = 1.5 },
-    Aimbot = { Enabled = true, Key = Enum.UserInputType.MouseButton2, FOV = 150, Smoothness = 0.15, CheckVisibility = true, ShowFOV = true },
-    Misc = { TeamCheck = false, Crosshair = true }
+    ESP = {
+        Enabled = true,
+        Rainbow = true,
+        Thickness = 1.5,
+        CornerLength = 8,
+        ShowNames = true,
+        ShowDistance = true,
+        ShowHealth = true
+    },
+    Tracker = {
+        Enabled = true,
+        Rainbow = true,
+        Thickness = 1.5
+    },
+    Aimbot = {
+        Enabled = true,
+        Key = Enum.UserInputType.MouseButton2,
+        FOV = 150,
+        Smoothness = 0.15,
+        CheckVisibility = true,
+        ShowFOV = true,
+        Rainbow = false
+    },
+    Misc = {
+        TeamCheck = false,
+        Crosshair = true
+    }
 }
 
 local ESP_Objects = {}
+
+-- 🆕 v3 FIX (C): shutdown flag so main loop bails after cleanup
+local ShuttingDown = false
 
 local FOV_Circle = Drawing.new("Circle")
 FOV_Circle.Thickness = 1
@@ -59,31 +85,32 @@ local function GetBoundingBox(Character)
 end
 
 local function IsVisible(targetPart)
+    if not targetPart then return false end
+
     local rayParams = RaycastParams.new()
-    rayParams.FilterType = Enum.RaycastFilterType.Blacklist
+    rayParams.FilterType = Enum.RaycastFilterType.Exclude
     rayParams.FilterDescendantsInstances = {LocalPlayer.Character, targetPart.Parent}
-    
+    rayParams.IgnoreWater = true
+
     local origin = Camera.CFrame.Position
     local direction = targetPart.Position - origin
     local result = Workspace:Raycast(origin, direction, rayParams)
-    
+
     return not result
 end
 
 local function HideAllESPObjects(obj)
-    obj.TL1.Visible = false; obj.TL2.Visible = false
-    obj.TR1.Visible = false; obj.TR2.Visible = false
-    obj.BL1.Visible = false; obj.BL2.Visible = false
-    obj.BR1.Visible = false; obj.BR2.Visible = false
-    obj.Name.Visible = false
-    obj.Distance.Visible = false
-    obj.HealthBg.Visible = false
-    obj.HealthBar.Visible = false
-    obj.Tracker.Visible = false
+    if not obj then return end
+    for _, line in pairs(obj) do
+        if typeof(line) == "Instance" and line.Visible ~= nil then
+            line.Visible = false
+        end
+    end
 end
 
 local function InitPlayer(Player)
-    if Player == LocalPlayer then return end
+    if Player == LocalPlayer or ESP_Objects[Player] then return end
+
     ESP_Objects[Player] = {
         TL1 = Drawing.new("Line"), TL2 = Drawing.new("Line"),
         TR1 = Drawing.new("Line"), TR2 = Drawing.new("Line"),
@@ -95,10 +122,12 @@ local function InitPlayer(Player)
         HealthBar = Drawing.new("Line"),
         HealthBg = Drawing.new("Line"),
     }
+
     for _, line in pairs(ESP_Objects[Player]) do
         if line.Thickness then line.Thickness = 1.5 end
         line.Visible = false
     end
+
     ESP_Objects[Player].Name.Size = 12
     ESP_Objects[Player].Name.Center = true
     ESP_Objects[Player].Name.Outline = true
@@ -109,9 +138,29 @@ end
 
 local function CleanupPlayer(Player)
     if ESP_Objects[Player] then
-        for _, line in pairs(ESP_Objects[Player]) do line:Remove() end
+        for _, line in pairs(ESP_Objects[Player]) do
+            pcall(function() line:Remove() end)
+        end
         ESP_Objects[Player] = nil
     end
+end
+
+-- 🆕 v3 FIX (A, B, C): single-source cleanup — no dual bookkeeping,
+-- no dead ScriptContext.Error hook, and ShuttingDown halts the loop.
+local function CleanupAll()
+    ShuttingDown = true
+
+    for _, obj in pairs(ESP_Objects) do
+        for _, line in pairs(obj) do
+            pcall(function() line:Remove() end)
+        end
+    end
+
+    pcall(function() FOV_Circle:Remove() end)
+    pcall(function() CrosshairH:Remove() end)
+    pcall(function() CrosshairV:Remove() end)
+
+    ESP_Objects = {}
 end
 
 Players.PlayerAdded:Connect(InitPlayer)
@@ -119,16 +168,24 @@ Players.PlayerRemoving:Connect(CleanupPlayer)
 for _, p in ipairs(Players:GetPlayers()) do InitPlayer(p) end
 
 RunService.RenderStepped:Connect(function()
+    -- 🆕 v3 FIX (C): bail once cleanup has run
+    if ShuttingDown then return end
+
+    if not Camera or not Camera.Parent then
+        Camera = Workspace.CurrentCamera
+        if not Camera then return end
+    end
+
     local viewportSize = Camera.ViewportSize
     local screenCenter = Vector2.new(viewportSize.X / 2, viewportSize.Y / 2)
     local color = Config.ESP.Rainbow and GetRainbow() or Color3.fromRGB(255, 255, 255)
     local aimTarget = nil
     local closestDist = Config.Aimbot.FOV
 
-    if Config.Aimbot.ShowFOV then
+    if Config.Aimbot.ShowFOV and Config.Aimbot.Enabled then
         FOV_Circle.Position = screenCenter
         FOV_Circle.Radius = Config.Aimbot.FOV
-        FOV_Circle.Color = color
+        FOV_Circle.Color = Config.Aimbot.Rainbow and color or Color3.fromRGB(255, 255, 255)
         FOV_Circle.Visible = true
     else
         FOV_Circle.Visible = false
@@ -152,7 +209,9 @@ RunService.RenderStepped:Connect(function()
             local obj = ESP_Objects[Player]
             local humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
 
-            if Config.Misc.TeamCheck and Player.Team == LocalPlayer.Team then
+            if Config.Misc.TeamCheck
+                and Player.Team ~= nil
+                and Player.Team == LocalPlayer.Team then
                 HideAllESPObjects(obj)
                 continue
             end
@@ -166,15 +225,23 @@ RunService.RenderStepped:Connect(function()
                 if Config.ESP.Enabled then
                     local cLen = Config.ESP.CornerLength
                     local tl, tr, bl, br = bbox.TopLeft, bbox.TopRight, bbox.BottomLeft, bbox.BottomRight
-                    
+
                     local corners = {
-                        {obj.TL1, tl, tl + Vector2.new(cLen, 0)}, {obj.TL2, tl, tl + Vector2.new(0, cLen)},
-                        {obj.TR1, tr, tr - Vector2.new(cLen, 0)}, {obj.TR2, tr, tr + Vector2.new(0, cLen)},
-                        {obj.BL1, bl, bl + Vector2.new(cLen, 0)}, {obj.BL2, bl, bl - Vector2.new(0, cLen)},
-                        {obj.BR1, br, br - Vector2.new(cLen, 0)}, {obj.BR2, br, br - Vector2.new(0, cLen)},
+                        {obj.TL1, tl, tl + Vector2.new(cLen, 0)},
+                        {obj.TL2, tl, tl + Vector2.new(0, cLen)},
+                        {obj.TR1, tr, tr - Vector2.new(cLen, 0)},
+                        {obj.TR2, tr, tr + Vector2.new(0, cLen)},
+                        {obj.BL1, bl, bl + Vector2.new(cLen, 0)},
+                        {obj.BL2, bl, bl - Vector2.new(0, cLen)},
+                        {obj.BR1, br, br - Vector2.new(cLen, 0)},
+                        {obj.BR2, br, br - Vector2.new(0, cLen)},
                     }
                     for _, c in ipairs(corners) do
-                        c[1].From = c[2]; c[1].To = c[3]; c[1].Color = color; c[1].Visible = true
+                        c[1].From = c[2]
+                        c[1].To = c[3]
+                        c[1].Color = color
+                        c[1].Thickness = Config.ESP.Thickness
+                        c[1].Visible = true
                     end
 
                     if Config.ESP.ShowNames then
@@ -195,39 +262,39 @@ RunService.RenderStepped:Connect(function()
                         obj.Distance.Visible = false
                     end
 
-                    if Config.ESP.ShowHealth then
-                        local healthPercent = humanoid.Health / humanoid.MaxHealth
+                    if Config.ESP.ShowHealth and humanoid.MaxHealth > 0 then
+                        local healthPercent = math.clamp(humanoid.Health / humanoid.MaxHealth, 0, 1)
+
                         obj.HealthBg.From = bbox.BottomLeft - Vector2.new(5, 0)
                         obj.HealthBg.To = bbox.TopLeft - Vector2.new(5, 0)
                         obj.HealthBg.Thickness = 3
                         obj.HealthBg.Color = Color3.fromRGB(0, 0, 0)
                         obj.HealthBg.Visible = true
-                        
+
                         local healthHeight = (bbox.BottomLeft.Y - bbox.TopLeft.Y) * healthPercent
                         obj.HealthBar.From = bbox.BottomLeft - Vector2.new(5, 0)
                         obj.HealthBar.To = Vector2.new(bbox.TopLeft.X - 5, bbox.BottomLeft.Y - healthHeight)
                         obj.HealthBar.Thickness = 2
-                        obj.HealthBar.Color = Color3.fromRGB(255, 0, 0) * (1 - healthPercent) + Color3.fromRGB(0, 255, 0) * healthPercent
+                        obj.HealthBar.Color = Color3.new(1 - healthPercent, healthPercent, 0)
                         obj.HealthBar.Visible = true
                     else
                         obj.HealthBg.Visible = false
                         obj.HealthBar.Visible = false
                     end
                 else
-                    obj.TL1.Visible = false; obj.TL2.Visible = false
-                    obj.TR1.Visible = false; obj.TR2.Visible = false
-                    obj.BL1.Visible = false; obj.BL2.Visible = false
-                    obj.BR1.Visible = false; obj.BR2.Visible = false
-                    obj.Name.Visible = false
-                    obj.Distance.Visible = false
-                    obj.HealthBg.Visible = false
-                    obj.HealthBar.Visible = false
+                    for _, line in pairs(obj) do
+                        if typeof(line) == "Instance" and line.Visible ~= nil then
+                            line.Visible = false
+                        end
+                    end
                 end
 
                 if Config.Tracker.Enabled then
-                    obj.Tracker.From = Vector2.new(viewportSize.X / 2, viewportSize.Y)
+                    -- 🆕 v3 FIX (E): use screenCenter.X for consistency
+                    obj.Tracker.From = Vector2.new(screenCenter.X, viewportSize.Y)
                     obj.Tracker.To = bbox.Center
-                    obj.Tracker.Color = color
+                    obj.Tracker.Color = Config.Tracker.Rainbow and color or Color3.fromRGB(255, 255, 255)
+                    obj.Tracker.Thickness = Config.Tracker.Thickness
                     obj.Tracker.Visible = true
                 else
                     obj.Tracker.Visible = false
@@ -240,7 +307,7 @@ RunService.RenderStepped:Connect(function()
                         if Config.Aimbot.CheckVisibility then
                             isVisible = IsVisible(bbox.Head)
                         end
-                        
+
                         if isVisible then
                             closestDist = dist
                             aimTarget = bbox.Head
@@ -253,8 +320,33 @@ RunService.RenderStepped:Connect(function()
         end
     end
 
+    -- Aimbot execution
     if aimTarget and UserInputService:IsMouseButtonPressed(Config.Aimbot.Key) then
-        local targetCFrame = CFrame.new(Camera.CFrame.Position, aimTarget.Position)
-        Camera.CFrame = Camera.CFrame:Lerp(targetCFrame, 1 - Config.Aimbot.Smoothness)
+        -- 🆕 v3 FIX (D): only bail when the game has taken camera control.
+        -- Custom (default), Attach, Watch, Track all work.
+        if Camera.CameraType ~= Enum.CameraType.Scriptable then
+            local targetPosition = aimTarget.Position
+            local currentCFrame = Camera.CFrame
+            local targetCFrame = CFrame.new(currentCFrame.Position, targetPosition)
+
+            local smoothFactor = math.clamp(1 - Config.Aimbot.Smoothness, 0, 1)
+            Camera.CFrame = currentCFrame:Lerp(targetCFrame, smoothFactor)
+        end
+    end
+end)
+
+-- Kill-switch (optional) — press Delete to tear down cleanly without rejoining
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if input.KeyCode == Enum.KeyCode.Delete then
+        CleanupAll()
+    end
+end)
+
+-- Register BindToClose. Fires on server-side shutdown / game:Shutdown().
+-- Does NOT reliably fire for LocalScripts on client exit — harmless either way.
+game:BindToClose(function()
+    if not ShuttingDown then
+        CleanupAll()
     end
 end)
