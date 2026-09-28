@@ -1,7 +1,7 @@
 --[[
 UnnamedWard Key Gate (keysystem.lua)
-- Loaded by the main script via loadstring.
-- Reads URLs from getgenv().UnnamedWardGateCtx (published by main script).
+- ALWAYS shows the input UI. Never auto-verifies from disk.
+- User must manually enter a wishlisted (or free) key.
 - Censors key input: first 3 chars visible, rest masked as bullets.
 - Writes real key (not censored) to UnnamedWard_key.txt on success.
 - Sets getgenv().UnnamedWardTier to EXACTLY "PREMIUM" or "FREE".
@@ -66,8 +66,6 @@ local WISHLIST_URL   = ctx.Wishlist   or "https://raw.githubusercontent.com/Unna
 local BLACKLIST_URL  = ctx.Blacklist  or "https://raw.githubusercontent.com/UnnamedScriptsOfficial/UnnamedWard/main/blacklist.json"
 local FREE_URL       = ctx.Free       or "https://raw.githubusercontent.com/UnnamedScriptsOfficial/UnnamedWard/refs/heads/main/free.json"
 local DISCORD_INVITE = ctx.Discord    or "https://discord.gg/g7jj8F6suv"
-
-local savedKey = ctx.SavedKey
 
 -- ============================================================
 -- THEME — light pink + light blue (matches main script)
@@ -448,6 +446,7 @@ keyBox.BorderSizePixel = 0
 keyBox.Font = MainFont
 keyBox.PlaceholderText = "Enter your key..."
 keyBox.PlaceholderColor3 = Theme.TextDark
+keyBox.Text = ""
 keyBox.TextColor3 = Theme.TextWhite
 keyBox.TextSize = 13
 keyBox.ClearTextOnFocus = false
@@ -520,7 +519,8 @@ end)
 keyBox.Focused:Connect(function() kStroke.Color = Theme.BorderPink end)
 keyBox.FocusLost:Connect(function() kStroke.Color = Theme.BorderCard end)
 
-setRawKey(savedKey or "")
+-- Start with empty input. No auto-fill.
+setRawKey("")
 
 -- Status label
 local statusLbl = Instance.new("TextLabel")
@@ -605,7 +605,7 @@ hintLbl.ZIndex = 3
 hintLbl.Parent = panel
 
 -- ============================================================
--- LOGIC — signals ONLY "PREMIUM" or "FREE"
+-- LOGIC — user must enter a key manually
 -- ============================================================
 
 local verifying = false
@@ -615,8 +615,6 @@ local function finishSuccess(expiry, tier)
     if unlocked then return end
     unlocked = true
 
-    -- NORMALIZE: only the exact string "PREMIUM" (case-insensitive) counts
-    -- as premium. Everything else is FREE.
     local normalizedTier = "FREE"
     if type(tier) == "string" and tier:upper() == "PREMIUM" then
         normalizedTier = "PREMIUM"
@@ -627,7 +625,6 @@ local function finishSuccess(expiry, tier)
     getgenv().UnnamedWardTier        = normalizedTier
     getgenv().UnnamedWardGateClosed  = false
 
-    -- Write the REAL key (not the censored one) to disk.
     local rawKey = getRawKey()
     if writefile and rawKey and rawKey ~= "" then
         pcall(function() writefile("UnnamedWard_key.txt", rawKey) end)
@@ -662,7 +659,6 @@ local function trySubmit()
     task.spawn(function()
         local valid, result, tier = verifyKey(entered)
         if valid then
-            -- Show which tier was resolved, so it's obvious what's happening.
             local label = (tostring(tier):upper() == "PREMIUM") and "PREMIUM" or "FREE"
             statusLbl.TextColor3 = Theme.Green
             statusLbl.Text = label .. " access granted. Duration: " .. tostring(result)
@@ -722,25 +718,6 @@ quit.MouseLeave:Connect(function()
     quit.TextColor3 = Theme.TextMuted
 end)
 
--- Auto-verify saved key on load
-if savedKey and savedKey ~= "" then
-    task.spawn(function()
-        task.wait(0.3)
-        if unlocked then return end
-        statusLbl.TextColor3 = Theme.TextMuted
-        statusLbl.Text = "Checking saved key..."
-        local valid, result, tier = verifyKey(savedKey)
-        if unlocked then return end
-        if valid then
-            local label = (tostring(tier):upper() == "PREMIUM") and "PREMIUM" or "FREE"
-            statusLbl.TextColor3 = Theme.Green
-            statusLbl.Text = "Saved " .. label .. " key valid. Duration: " .. tostring(result)
-            task.wait(0.5)
-            finishSuccess(result, tier)
-        else
-            statusLbl.TextColor3 = Theme.Yellow
-            statusLbl.Text = "Saved key invalid: " .. tostring(result)
-            if delfile then pcall(function() delfile("UnnamedWard_key.txt") end) end
-        end
-    end)
-end
+-- ============================================================
+-- NO AUTO-VERIFY. The user must enter a key manually.
+-- ============================================================
