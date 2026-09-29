@@ -1,58 +1,55 @@
 --[[
-UnnamedWard UI (Standalone Menu)
-- Light pink + light blue theme
-- All tabs and widgets
-- No key gate, no external loaders
-- Toggles write to a local Config table; wire them to your own features
+UnnamedWard UI (Mobile + PC Safe)
+- Lazy tab building: only the visible tab allocates widgets
+- Two shared UIS connections total (not two-per-slider)
+- No Drawing, no getrawmetatable, no external fetches
+- Toggles write to a local Config table; wire modules to it later
 Discord: https://discord.gg/g7jj8F6suv
 ]]
 
 -- ============================================================
--- SECTION 1: INIT
+-- INIT
 -- ============================================================
 
 if not game:IsLoaded() then game.Loaded:Wait() end
 
 local Players           = game:GetService("Players")
-local Workspace         = game:GetService("Workspace")
 local RunService        = game:GetService("RunService")
 local UserInputService  = game:GetService("UserInputService")
 local TweenService      = game:GetService("TweenService")
 local TeleportService   = game:GetService("TeleportService")
-local Lighting          = game:GetService("Lighting")
 
 local LocalPlayer = Players.LocalPlayer
-local PlayerGui = LocalPlayer:WaitForChild("PlayerGui", 15)
-if not PlayerGui then
-    warn("[UnnamedWard] Could not find PlayerGui")
+if not LocalPlayer then
+    local waited = 0
+    while not Players.LocalPlayer and waited < 10 do
+        task.wait(0.1)
+        waited = waited + 0.1
+    end
+    LocalPlayer = Players.LocalPlayer
+end
+if not LocalPlayer then
+    warn("[UnnamedWard] LocalPlayer unavailable.")
     return
 end
 
--- Purge old instances
-do
-    for _, child in ipairs(PlayerGui:GetChildren()) do
-        if child.Name == "UnnamedWardUI" or child.Name == "UnnamedWardMobileToggle" then
-            pcall(function() child:Destroy() end)
-        end
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui", 15)
+if not PlayerGui then
+    warn("[UnnamedWard] No PlayerGui.")
+    return
+end
+
+-- Purge previous instances
+for _, child in ipairs(PlayerGui:GetChildren()) do
+    if child.Name == "UnnamedWardUI" or child.Name == "UnnamedWardMobileToggle" then
+        pcall(function() child:Destroy() end)
     end
 end
 
-local Camera = Workspace.CurrentCamera
 local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 
-local isRunning = true
-local activeConnections = {}
-local cleanUpInstances = {}
-
-local function trackConnection(conn)
-    if conn then
-        table.insert(activeConnections, conn)
-    end
-    return conn
-end
-
 -- ============================================================
--- SECTION 2: CONFIG
+-- CONFIG
 -- ============================================================
 
 local Config = {
@@ -62,27 +59,39 @@ local Config = {
     ESP_EnemyOnly = true,
     ESP_Lobby = true,
     SpeedHack = false,
+    SpeedValue = 49,
     FlyHack = false,
+    FlySpeed = 50,
     Noclip = false,
+    InfiniteJump = false,
+    BunnyHop = false,
     NoRecoil = true,
     NoSpread = true,
+    FastReload = false,
+    RapidFire = false,
+    InfiniteAmmo = false,
     UnlockAllSkins = false,
+    HideViewModel = false,
     Fullbright = false,
     NoFog = true,
+    CustomFOV = false,
+    FOVValue = 90,
     ThirdPerson = false,
     Freecam = false,
     MenuKey = Enum.KeyCode.RightControl,
 }
 
+-- Public API so external scripts can read/write Config
+if getgenv then getgenv().UnnamedWardUIConfig = Config end
+
 -- ============================================================
--- SECTION 3: THEME
+-- THEME
 -- ============================================================
 
 local Theme = {
     OuterBorder      = Color3.fromRGB(180, 200, 235),
     BorderPink       = Color3.fromRGB(250, 195, 215),
     BorderPinkDark   = Color3.fromRGB(220, 150, 180),
-    BorderBlue       = Color3.fromRGB(180, 205, 240),
 
     WindowBg         = Color3.fromRGB(250, 248, 252),
     WindowBgTop      = Color3.fromRGB(255, 250, 253),
@@ -91,7 +100,6 @@ local Theme = {
     HeaderBg         = Color3.fromRGB(245, 240, 248),
 
     CardBg           = Color3.fromRGB(252, 248, 252),
-    BorderDark       = Color3.fromRGB(210, 205, 220),
     BorderCard       = Color3.fromRGB(200, 195, 215),
 
     AccentPink       = Color3.fromRGB(245, 170, 195),
@@ -99,8 +107,6 @@ local Theme = {
     AccentPinkDark   = Color3.fromRGB(215, 130, 165),
 
     AccentBlue       = Color3.fromRGB(150, 190, 240),
-    AccentBlueLight  = Color3.fromRGB(180, 215, 250),
-    AccentBlueDark   = Color3.fromRGB(110, 155, 215),
 
     TextWhite        = Color3.fromRGB(55, 60, 85),
     TextMuted        = Color3.fromRGB(120, 125, 145),
@@ -118,7 +124,7 @@ local MainFont = Enum.Font.Gotham
 local MonoFont = Enum.Font.RobotoMono
 
 -- ============================================================
--- SECTION 4: SCREEN GUI
+-- SCREEN GUI + UNLOAD
 -- ============================================================
 
 local screenGui = Instance.new("ScreenGui")
@@ -126,20 +132,28 @@ screenGui.Name = "UnnamedWardUI"
 screenGui.ResetOnSpawn = false
 screenGui.IgnoreGuiInset = true
 screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-screenGui.DisplayOrder = 2147483000
+screenGui.DisplayOrder = 999
 screenGui.Parent = PlayerGui
-table.insert(cleanUpInstances, screenGui)
 
-local function UnloadScript()
-    isRunning = false
-    for _, conn in ipairs(activeConnections) do pcall(function() conn:Disconnect() end) end
-    table.clear(activeConnections)
-    for _, inst in ipairs(cleanUpInstances) do pcall(function() inst:Destroy() end) end
-    table.clear(cleanUpInstances)
+local activeConnections = {}
+local function track(conn)
+    if conn then table.insert(activeConnections, conn) end
+    return conn
 end
 
+local function UnloadUI()
+    for _, conn in ipairs(activeConnections) do
+        pcall(function() conn:Disconnect() end)
+    end
+    table.clear(activeConnections)
+    pcall(function() screenGui:Destroy() end)
+    if getgenv then getgenv().UnnamedWardUIUnload = nil end
+end
+
+if getgenv then getgenv().UnnamedWardUIUnload = UnloadUI end
+
 -- ============================================================
--- SECTION 5: NOTIFICATIONS + DROPDOWN OVERLAY
+-- DROPDOWN OVERLAY + NOTIFICATIONS
 -- ============================================================
 
 local dropdownOverlay = Instance.new("Frame")
@@ -148,15 +162,6 @@ dropdownOverlay.Size = UDim2.new(1, 0, 1, 0)
 dropdownOverlay.BackgroundTransparency = 1
 dropdownOverlay.ZIndex = 1000
 dropdownOverlay.Parent = screenGui
-table.insert(cleanUpInstances, dropdownOverlay)
-
-local activeDropdownClose = nil
-
-trackConnection(UserInputService.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        if activeDropdownClose then activeDropdownClose(input.Position) end
-    end
-end))
 
 local notifContainer = Instance.new("Frame")
 notifContainer.Name = "NotifContainer"
@@ -165,7 +170,6 @@ notifContainer.Position = UDim2.new(1, isMobile and -230 or -295, 0, 40)
 notifContainer.BackgroundTransparency = 1
 notifContainer.ZIndex = 100
 notifContainer.Parent = screenGui
-table.insert(cleanUpInstances, notifContainer)
 
 local notifLayout = Instance.new("UIListLayout")
 notifLayout.SortOrder = Enum.SortOrder.LayoutOrder
@@ -177,7 +181,6 @@ local MAX_NOTIFS = 5
 local notifSeq = 0
 
 local function ShowNotification(title, message, notifType, duration)
-    if not isRunning then return end
     pcall(function()
         if not notifContainer or not notifContainer.Parent then return end
 
@@ -257,11 +260,13 @@ local function ShowNotification(title, message, notifType, duration)
     end)
 end
 
+if getgenv then getgenv().UnnamedWardNotify = ShowNotification end
+
 -- ============================================================
--- SECTION 6: MAIN WINDOW
+-- MAIN WINDOW
 -- ============================================================
 
-local screenSize = Camera and Camera.ViewportSize or Vector2.new(1280, 720)
+local screenSize = (workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize) or Vector2.new(1280, 720)
 local winW = isMobile and math.clamp(screenSize.X - 30, 260, 440) or 540
 local winH = isMobile and math.clamp(screenSize.Y - 80, 340, 600) or 560
 
@@ -275,7 +280,6 @@ mainWindow.ClipsDescendants = false
 mainWindow.Active = true
 mainWindow.ZIndex = 10
 mainWindow.Parent = screenGui
-table.insert(cleanUpInstances, mainWindow)
 
 local function setMenuVisible(visible)
     mainWindow.Visible = visible
@@ -308,7 +312,7 @@ local dragConn = nil
 local isDragging = false
 local dragStart, startPos
 
-trackConnection(topBar.InputBegan:Connect(function(input)
+track(topBar.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         isDragging = true
         dragStart = input.Position
@@ -325,7 +329,7 @@ trackConnection(topBar.InputBegan:Connect(function(input)
         end)
     end
 end))
-trackConnection(UserInputService.InputChanged:Connect(function(input)
+track(UserInputService.InputChanged:Connect(function(input)
     if isDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
         local delta = input.Position - dragStart
         mainWindow.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
@@ -481,64 +485,41 @@ statusRight.ZIndex = 13
 statusRight.Parent = statusBar
 
 -- ============================================================
--- SECTION 7: TAB SYSTEM
+-- TAB SYSTEM (lazy)
 -- ============================================================
 
 local tabList = {"home", "aim", "esp", "move", "guns", "world", "config"}
-local tabPages = {}
 local tabButtons = {}
-local currentTab = "home"
+local currentTab = nil
+
+local function getRightCol(page)
+    return page:FindFirstChild("RightCol") or page:FindFirstChild("LeftCol")
+end
+
+-- Forward declaration — each tab provides its own build function
+local tabBuilders = {}
 
 local function switchTab(tabName)
+    if currentTab == tabName then return end
     currentTab = tabName
-    for tName, page in pairs(tabPages) do
-        page.Visible = (tName == tabName)
+
+    -- Destroy previous page
+    for _, child in ipairs(tabContentFrame:GetChildren()) do
+        pcall(function() child:Destroy() end)
     end
+
+    -- Update button styles
     for _, btnData in ipairs(tabButtons) do
         local isSelf = (btnData.name == tabName)
         btnData.btn.TextColor3 = isSelf and Theme.AccentPinkDark or Theme.TextMuted
-        if btnData.indicator then btnData.indicator.Visible = isSelf end
+        btnData.indicator.Visible = isSelf
     end
-end
 
-for idx, tabName in ipairs(tabList) do
-    local btn = Instance.new("TextButton")
-    btn.Name = "TabBtn_" .. tabName
-    btn.LayoutOrder = idx
-    btn.Size = UDim2.new(0, 0, 1, 0)
-    btn.AutomaticSize = Enum.AutomaticSize.X
-    btn.BackgroundTransparency = 1
-    btn.Font = MainFont
-    btn.Text = tabName:sub(1, 1):upper() .. tabName:sub(2)
-    btn.TextColor3 = (tabName == currentTab) and Theme.AccentPinkDark or Theme.TextMuted
-    btn.TextSize = 12
-    btn.AutoButtonColor = false
-    btn.ZIndex = 13
-    btn.Parent = tabNavScroll
-
-    local padBtn = Instance.new("UIPadding")
-    padBtn.PaddingLeft = UDim.new(0, 6)
-    padBtn.PaddingRight = UDim.new(0, 6)
-    padBtn.Parent = btn
-
-    local indicator = Instance.new("Frame")
-    indicator.Size = UDim2.new(1, -4, 0, 1.5)
-    indicator.Position = UDim2.new(0, 2, 1, -1)
-    indicator.BackgroundColor3 = Theme.AccentPink
-    indicator.BorderSizePixel = 0
-    indicator.Visible = (tabName == currentTab)
-    indicator.ZIndex = 14
-    indicator.Parent = btn
-
-    btn.MouseButton1Click:Connect(function() switchTab(tabName) end)
-
-    table.insert(tabButtons, {name = tabName, btn = btn, indicator = indicator})
-
+    -- Build new page
     local page = Instance.new("Frame")
     page.Name = "Page_" .. tabName
     page.Size = UDim2.new(1, 0, 1, 0)
     page.BackgroundTransparency = 1
-    page.Visible = (tabName == currentTab)
     page.ZIndex = 13
     page.Parent = tabContentFrame
 
@@ -558,9 +539,11 @@ for idx, tabName in ipairs(tabList) do
     leftCol.AutomaticCanvasSize = Enum.AutomaticSize.Y
     leftCol.ZIndex = 14
     leftCol.Parent = page
+
     local lLayout = Instance.new("UIListLayout")
     lLayout.Padding = UDim.new(0, 7)
     lLayout.Parent = leftCol
+
     local lPad = Instance.new("UIPadding")
     lPad.PaddingBottom = UDim.new(0, 10)
     lPad.Parent = leftCol
@@ -577,26 +560,61 @@ for idx, tabName in ipairs(tabList) do
         rightCol.AutomaticCanvasSize = Enum.AutomaticSize.Y
         rightCol.ZIndex = 14
         rightCol.Parent = page
+
         local rLayout = Instance.new("UIListLayout")
         rLayout.Padding = UDim.new(0, 7)
         rLayout.Parent = rightCol
+
         local rPad = Instance.new("UIPadding")
         rPad.PaddingBottom = UDim.new(0, 10)
         rPad.Parent = rightCol
     end
 
-    tabPages[tabName] = page
+    local builder = tabBuilders[tabName]
+    if builder then
+        pcall(builder, page)
+    end
 end
 
-local function getRightCol(page)
-    return page:FindFirstChild("RightCol") or page:FindFirstChild("LeftCol")
+for idx, tabName in ipairs(tabList) do
+    local btn = Instance.new("TextButton")
+    btn.Name = "TabBtn_" .. tabName
+    btn.LayoutOrder = idx
+    btn.Size = UDim2.new(0, 0, 1, 0)
+    btn.AutomaticSize = Enum.AutomaticSize.X
+    btn.BackgroundTransparency = 1
+    btn.Font = MainFont
+    btn.Text = tabName:sub(1, 1):upper() .. tabName:sub(2)
+    btn.TextColor3 = Theme.TextMuted
+    btn.TextSize = 12
+    btn.AutoButtonColor = false
+    btn.ZIndex = 13
+    btn.Parent = tabNavScroll
+
+    local padBtn = Instance.new("UIPadding")
+    padBtn.PaddingLeft = UDim.new(0, 6)
+    padBtn.PaddingRight = UDim.new(0, 6)
+    padBtn.Parent = btn
+
+    local indicator = Instance.new("Frame")
+    indicator.Size = UDim2.new(1, -4, 0, 1.5)
+    indicator.Position = UDim2.new(0, 2, 1, -1)
+    indicator.BackgroundColor3 = Theme.AccentPink
+    indicator.BorderSizePixel = 0
+    indicator.Visible = false
+    indicator.ZIndex = 14
+    indicator.Parent = btn
+
+    btn.MouseButton1Click:Connect(function() switchTab(tabName) end)
+
+    table.insert(tabButtons, {name = tabName, btn = btn, indicator = indicator})
 end
 
 -- ============================================================
--- SECTION 8: UI WIDGETS
+-- UI WIDGETS
 -- ============================================================
 
-local function createGroupbox(parent, title, desc)
+local function createGroupbox(parent, title)
     local card = Instance.new("Frame")
     card.Size = UDim2.new(1, -2, 0, 0)
     card.AutomaticSize = Enum.AutomaticSize.Y
@@ -610,15 +628,15 @@ local function createGroupbox(parent, title, desc)
     stroke.Thickness = 1
     stroke.Parent = card
 
-    local topPinkLine = Instance.new("Frame")
-    topPinkLine.Size = UDim2.new(1, 0, 0, 1.5)
-    topPinkLine.BackgroundColor3 = Theme.AccentPink
-    topPinkLine.BorderSizePixel = 0
-    topPinkLine.ZIndex = 16
-    topPinkLine.Parent = card
+    local topLine = Instance.new("Frame")
+    topLine.Size = UDim2.new(1, 0, 0, 1.5)
+    topLine.BackgroundColor3 = Theme.AccentPink
+    topLine.BorderSizePixel = 0
+    topLine.ZIndex = 16
+    topLine.Parent = card
 
     local header = Instance.new("Frame")
-    header.Size = UDim2.new(1, 0, 0, desc and 32 or 20)
+    header.Size = UDim2.new(1, 0, 0, 20)
     header.Position = UDim2.new(0, 0, 0, 1)
     header.BackgroundTransparency = 1
     header.ZIndex = 16
@@ -636,25 +654,10 @@ local function createGroupbox(parent, title, desc)
     titleLbl.ZIndex = 17
     titleLbl.Parent = header
 
-    if desc then
-        local descLbl = Instance.new("TextLabel")
-        descLbl.Size = UDim2.new(1, -12, 0, 14)
-        descLbl.Position = UDim2.new(0, 6, 0, 17)
-        descLbl.BackgroundTransparency = 1
-        descLbl.Font = MainFont
-        descLbl.Text = desc
-        descLbl.TextColor3 = Theme.TextMuted
-        descLbl.TextSize = 10.5
-        descLbl.TextWrapped = true
-        descLbl.TextXAlignment = Enum.TextXAlignment.Left
-        descLbl.ZIndex = 17
-        descLbl.Parent = header
-    end
-
     local content = Instance.new("Frame")
     content.Name = "Content"
     content.Size = UDim2.new(1, -12, 0, 0)
-    content.Position = UDim2.new(0, 6, 0, desc and 34 or 22)
+    content.Position = UDim2.new(0, 6, 0, 22)
     content.AutomaticSize = Enum.AutomaticSize.Y
     content.BackgroundTransparency = 1
     content.ZIndex = 16
@@ -663,6 +666,10 @@ local function createGroupbox(parent, title, desc)
     local cLayout = Instance.new("UIListLayout")
     cLayout.Padding = UDim.new(0, 6)
     cLayout.Parent = content
+
+    local cPad = Instance.new("UIPadding")
+    cPad.PaddingBottom = UDim.new(0, 8)
+    cPad.Parent = content
 
     return content
 end
@@ -718,31 +725,18 @@ local function addCheckbox(parent, labelText, defaultVal, callback)
     return { Set = updateState, Get = function() return state end }
 end
 
+-- Two shared UIS connections for all sliders
 local sliderRegistry = { isSliding = false, updateFn = nil }
 
-trackConnection(UserInputService.InputEnded:Connect(function(input)
+track(UserInputService.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         sliderRegistry.isSliding = false
         sliderRegistry.updateFn = nil
     end
 end))
 
-trackConnection(UserInputService.WindowFocusReleased:Connect(function()
-    sliderRegistry.isSliding = false
-    sliderRegistry.updateFn = nil
-end))
-
-local HasIMBP = type(UserInputService.IsMouseButtonPressed) == "function"
-
-trackConnection(UserInputService.InputChanged:Connect(function(input)
+track(UserInputService.InputChanged:Connect(function(input)
     if not sliderRegistry.isSliding or not sliderRegistry.updateFn then return end
-    if input.UserInputType == Enum.UserInputType.MouseMovement then
-        if HasIMBP and not UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
-            sliderRegistry.isSliding = false
-            sliderRegistry.updateFn = nil
-            return
-        end
-    end
     if input.UserInputType == Enum.UserInputType.MouseMovement
        or input.UserInputType == Enum.UserInputType.Touch then
         sliderRegistry.updateFn(input)
@@ -797,513 +791,4 @@ local function addSlider(parent, labelText, minVal, maxVal, defaultVal, displayT
         local d = displayTemplate:match("%%%.(%d+)f")
         if d then decimals = tonumber(d)
         elseif displayTemplate:find("%%f") then decimals = 2 end
-    elseif (minVal % 1 ~= 0) or (maxVal % 1 ~= 0) or (curVal % 1 ~= 0) then
-        decimals = 2
-    end
-
-    local function roundVal(raw)
-        if decimals > 0 then
-            local mult = 10 ^ decimals
-            return math.clamp(math.floor(raw * mult + 0.5) / mult, minVal, maxVal)
-        else
-            return math.clamp(math.floor(raw + 0.5), minVal, maxVal)
-        end
-    end
-
-    local function getDisplay(v)
-        if displayTemplate then return string.format(displayTemplate, v, maxVal) end
-        return tostring(v)
-    end
-
-    local valLbl = Instance.new("TextLabel")
-    valLbl.Size = UDim2.new(1, 0, 1, 0)
-    valLbl.BackgroundTransparency = 1
-    valLbl.Font = MonoFont
-    valLbl.Text = getDisplay(curVal)
-    valLbl.TextColor3 = Theme.TextWhite
-    valLbl.TextSize = 10.5
-    valLbl.ZIndex = 19
-    valLbl.Parent = track
-
-    local function updateFromInput(input)
-        local relX = math.clamp((input.Position.X - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
-        local raw = minVal + (maxVal - minVal) * relX
-        curVal = roundVal(raw)
-        local visualPct = math.clamp((curVal - minVal) / (maxVal - minVal), 0, 1)
-        fill.Size = UDim2.new(visualPct, 0, 1, 0)
-        valLbl.Text = getDisplay(curVal)
-        if type(callback) == "function" then callback(curVal) end
-    end
-
-    track.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            sliderRegistry.isSliding = true
-            sliderRegistry.updateFn = updateFromInput
-            updateFromInput(input)
-        end
-    end)
-
-    return {
-        Set = function(v)
-            local num = tonumber(v) or curVal
-            curVal = roundVal(num)
-            local p = math.clamp((curVal - minVal) / (maxVal - minVal), 0, 1)
-            fill.Size = UDim2.new(p, 0, 1, 0)
-            valLbl.Text = getDisplay(curVal)
-            if type(callback) == "function" then callback(curVal) end
-        end,
-        Get = function() return curVal end
-    }
-end
-
-local function addDropdown(parent, labelText, options, defaultValOrIdx, callback)
-    local selectedIdx = 1
-    if type(defaultValOrIdx) == "string" then
-        for i, name in ipairs(options) do
-            if name == defaultValOrIdx then
-                selectedIdx = i
-                break
-            end
-        end
-    elseif type(defaultValOrIdx) == "number" then
-        selectedIdx = math.clamp(defaultValOrIdx, 1, #options)
-    end
-
-    local isOpen = false
-
-    local container = Instance.new("Frame")
-    container.Size = UDim2.new(1, 0, 0, isMobile and 40 or 36)
-    container.BackgroundTransparency = 1
-    container.ZIndex = 16
-    container.Parent = parent
-
-    local lbl = Instance.new("TextLabel")
-    lbl.Size = UDim2.new(1, 0, 0, 13)
-    lbl.BackgroundTransparency = 1
-    lbl.Font = MainFont
-    lbl.Text = labelText
-    lbl.TextColor3 = Theme.TextMuted
-    lbl.TextSize = 11.5
-    lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.ZIndex = 17
-    lbl.Parent = container
-
-    local boxH = isMobile and 24 or 20
-    local box = Instance.new("TextButton")
-    box.Size = UDim2.new(1, 0, 0, boxH)
-    box.Position = UDim2.new(0, 0, 0, 15)
-    box.BackgroundColor3 = Theme.ControlBg
-    box.BorderSizePixel = 0
-    box.Font = MainFont
-    box.Text = "  " .. options[selectedIdx]
-    box.TextColor3 = Theme.TextWhite
-    box.TextSize = 11.5
-    box.TextXAlignment = Enum.TextXAlignment.Left
-    box.ZIndex = 17
-    box.Parent = container
-
-    local bStroke = Instance.new("UIStroke")
-    bStroke.Color = Theme.BorderCard
-    bStroke.Thickness = 1
-    bStroke.Parent = box
-
-    local chevron = Instance.new("TextLabel")
-    chevron.Size = UDim2.new(0, 14, 1, 0)
-    chevron.Position = UDim2.new(1, -16, 0, 0)
-    chevron.BackgroundTransparency = 1
-    chevron.Font = Enum.Font.GothamBold
-    chevron.Text = "v"
-    chevron.TextColor3 = Theme.AccentBlue
-    chevron.TextSize = 10
-    chevron.ZIndex = 18
-    chevron.Parent = box
-
-    local listFrame = Instance.new("ScrollingFrame")
-    listFrame.BackgroundColor3 = Theme.CardBg
-    listFrame.BorderSizePixel = 0
-    listFrame.ScrollBarThickness = 2.5
-    listFrame.ScrollBarImageColor3 = Theme.AccentBlue
-    listFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
-    listFrame.ZIndex = 1001
-    listFrame.Visible = false
-    listFrame.Parent = dropdownOverlay
-
-    local lStroke = Instance.new("UIStroke")
-    lStroke.Color = Theme.BorderPinkDark
-    lStroke.Thickness = 1
-    lStroke.Parent = listFrame
-
-    local optLayout = Instance.new("UIListLayout")
-    optLayout.Padding = UDim.new(0, 1)
-    optLayout.Parent = listFrame
-
-    local function closeDropdown()
-        isOpen = false
-        listFrame.Visible = false
-        chevron.Text = "v"
-        bStroke.Color = Theme.BorderCard
-        if activeDropdownClose == closeDropdown then activeDropdownClose = nil end
-    end
-
-    local optH = isMobile and 26 or 20
-
-    local function refreshOptions()
-        for _, child in ipairs(listFrame:GetChildren()) do
-            if child:IsA("TextButton") then child:Destroy() end
-        end
-        for idx, optName in ipairs(options) do
-            local optBtn = Instance.new("TextButton")
-            optBtn.Size = UDim2.new(1, 0, 0, optH)
-            optBtn.BackgroundColor3 = (idx == selectedIdx) and Theme.AccentPinkLight or Theme.CardBg
-            optBtn.BorderSizePixel = 0
-            optBtn.Font = MainFont
-            optBtn.Text = "  " .. optName
-            optBtn.TextColor3 = (idx == selectedIdx) and Theme.AccentPinkDark or Theme.TextWhite
-            optBtn.TextSize = 11.5
-            optBtn.TextXAlignment = Enum.TextXAlignment.Left
-            optBtn.ZIndex = 1002
-            optBtn.Parent = listFrame
-
-            optBtn.MouseButton1Click:Connect(function()
-                selectedIdx = idx
-                box.Text = "  " .. optName
-                closeDropdown()
-                if type(callback) == "function" then callback(optName, idx) end
-            end)
-        end
-    end
-
-    local function openDropdown()
-        if activeDropdownClose and activeDropdownClose ~= closeDropdown then activeDropdownClose() end
-        refreshOptions()
-        local boxPos = box.AbsolutePosition
-        local boxSize = box.AbsoluteSize
-        local menuHeight = math.min(#options * (optH + 1), isMobile and 200 or 140)
-        listFrame.Position = UDim2.new(0, boxPos.X, 0, boxPos.Y + boxSize.Y + 2)
-        listFrame.Size = UDim2.new(0, boxSize.X, 0, menuHeight)
-        listFrame.Visible = true
-        isOpen = true
-        chevron.Text = "^"
-        bStroke.Color = Theme.BorderPink
-
-        activeDropdownClose = function(clickPos)
-            if clickPos then
-                local menuPos = listFrame.AbsolutePosition
-                local menuSize = listFrame.AbsoluteSize
-                local inMenu = clickPos.X >= menuPos.X and clickPos.X <= (menuPos.X + menuSize.X)
-                    and clickPos.Y >= menuPos.Y and clickPos.Y <= (menuPos.Y + menuSize.Y)
-                local inBox = clickPos.X >= boxPos.X and clickPos.X <= (boxPos.X + boxSize.X)
-                    and clickPos.Y >= boxPos.Y and clickPos.Y <= (boxPos.Y + boxSize.Y)
-                if not inMenu and not inBox then closeDropdown() end
-            else
-                closeDropdown()
-            end
-        end
-    end
-
-    box.MouseButton1Click:Connect(function()
-        if isOpen then closeDropdown() else openDropdown() end
-    end)
-
-    return {
-        Set = function(valOrIdx)
-            local targetIdx = 1
-            if type(valOrIdx) == "number" then
-                targetIdx = math.clamp(valOrIdx, 1, #options)
-            elseif type(valOrIdx) == "string" then
-                for i, name in ipairs(options) do
-                    if name == valOrIdx then
-                        targetIdx = i
-                        break
-                    end
-                end
-            end
-            selectedIdx = targetIdx
-            box.Text = "  " .. options[selectedIdx]
-            if type(callback) == "function" then callback(options[selectedIdx], selectedIdx) end
-        end,
-        Get = function() return options[selectedIdx] end
-    }
-end
-
-local function addTextbox(parent, labelText, defaultVal, placeholder, callback)
-    local container = Instance.new("Frame")
-    container.Size = UDim2.new(1, 0, 0, isMobile and 42 or 36)
-    container.BackgroundTransparency = 1
-    container.ZIndex = 16
-    container.Parent = parent
-
-    local lbl = Instance.new("TextLabel")
-    lbl.Size = UDim2.new(1, 0, 0, 12)
-    lbl.BackgroundTransparency = 1
-    lbl.Font = MainFont
-    lbl.Text = labelText
-    lbl.TextColor3 = Theme.TextMuted
-    lbl.TextSize = 11.5
-    lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.ZIndex = 17
-    lbl.Parent = container
-
-    local tbH = isMobile and 26 or 20
-    local tb = Instance.new("TextBox")
-    tb.Size = UDim2.new(1, 0, 0, tbH)
-    tb.Position = UDim2.new(0, 0, 0, 14)
-    tb.BackgroundColor3 = Theme.ControlBg
-    tb.BorderSizePixel = 0
-    tb.Font = MainFont
-    tb.PlaceholderText = placeholder or ""
-    tb.PlaceholderColor3 = Theme.TextDark
-    tb.Text = defaultVal or ""
-    tb.TextColor3 = Theme.TextWhite
-    tb.TextSize = 12
-    tb.TextXAlignment = Enum.TextXAlignment.Left
-    tb.ClearTextOnFocus = false
-    tb.ZIndex = 17
-    tb.Parent = container
-
-    local tPad = Instance.new("UIPadding")
-    tPad.PaddingLeft = UDim.new(0, 8)
-    tPad.PaddingRight = UDim.new(0, 8)
-    tPad.Parent = tb
-
-    local tbStroke = Instance.new("UIStroke")
-    tbStroke.Color = Theme.BorderCard
-    tbStroke.Thickness = 1
-    tbStroke.Parent = tb
-
-    tb.Focused:Connect(function() tbStroke.Color = Theme.BorderPink end)
-    tb.FocusLost:Connect(function()
-        tbStroke.Color = Theme.BorderCard
-        if type(callback) == "function" then callback(tb.Text) end
-    end)
-
-    return {
-        Set = function(txt)
-            tb.Text = tostring(txt)
-            if type(callback) == "function" then callback(tb.Text) end
-        end,
-        Get = function() return tb.Text end,
-    }
-end
-
-local function addButton(parent, btnText, callback)
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1, 0, 0, isMobile and 32 or 26)
-    btn.BackgroundColor3 = Theme.ButtonBg
-    btn.BorderSizePixel = 0
-    btn.Font = MainFont
-    btn.Text = btnText
-    btn.TextColor3 = Theme.TextWhite
-    btn.TextSize = isMobile and 12.5 or 12
-    btn.AutoButtonColor = false
-    btn.ZIndex = 17
-    btn.Parent = parent
-
-    local bStroke = Instance.new("UIStroke")
-    bStroke.Color = Theme.BorderPink
-    bStroke.Thickness = 1
-    bStroke.Parent = btn
-
-    btn.MouseEnter:Connect(function()
-        btn.BackgroundColor3 = Theme.ButtonHoverBg
-        bStroke.Color = Theme.AccentPink
-    end)
-    btn.MouseLeave:Connect(function()
-        btn.BackgroundColor3 = Theme.ButtonBg
-        bStroke.Color = Theme.BorderPink
-    end)
-
-    btn.MouseButton1Click:Connect(function()
-        if type(callback) == "function" then callback() end
-    end)
-    return btn
-end
-
--- ============================================================
--- SECTION 9: TAB CONTENTS
--- ============================================================
-
-local uiRegistry = {}
-
--- HOME
-local pageHome = tabPages["home"]
-local homeLeft = pageHome:FindFirstChild("LeftCol")
-local homeRight = getRightCol(pageHome)
-
-local gbAccount = createGroupbox(homeLeft, "Account")
-local aUser = Instance.new("TextLabel")
-aUser.Size = UDim2.new(1, 0, 0, 16)
-aUser.BackgroundTransparency = 1
-aUser.Font = MonoFont
-aUser.Text = LocalPlayer.DisplayName
-aUser.TextColor3 = Theme.TextWhite
-aUser.TextSize = 12.5
-aUser.TextXAlignment = Enum.TextXAlignment.Left
-aUser.ZIndex = 17
-aUser.Parent = gbAccount
-
-local aHandle = Instance.new("TextLabel")
-aHandle.Size = UDim2.new(1, 0, 0, 16)
-aHandle.BackgroundTransparency = 1
-aHandle.Font = MonoFont
-aHandle.Text = "@" .. LocalPlayer.Name
-aHandle.TextColor3 = Theme.TextMuted
-aHandle.TextSize = 11
-aHandle.TextXAlignment = Enum.TextXAlignment.Left
-aHandle.ZIndex = 17
-aHandle.Parent = gbAccount
-
-local gbSession = createGroupbox(homeRight, "Session")
-local sInfo = Instance.new("TextLabel")
-sInfo.Size = UDim2.new(1, 0, 0, 16)
-sInfo.BackgroundTransparency = 1
-sInfo.Font = MonoFont
-sInfo.Text = #Players:GetPlayers() .. " players online"
-sInfo.TextColor3 = Theme.TextWhite
-sInfo.TextSize = 12.5
-sInfo.TextXAlignment = Enum.TextXAlignment.Left
-sInfo.ZIndex = 17
-sInfo.Parent = gbSession
-
-addButton(gbSession, "Rejoin server", function()
-    ShowNotification("UnnamedWard", "Reconnecting...", "INFO", 3)
-    task.spawn(function()
-        task.wait(0.5)
-        pcall(function() TeleportService:Teleport(game.PlaceId, LocalPlayer) end)
-    end)
-end)
-
--- AIM
-local pageAim = tabPages["aim"]
-local aimLeft = pageAim:FindFirstChild("LeftCol")
-local aimRight = getRightCol(pageAim)
-
-local gbAimbot = createGroupbox(aimLeft, "Aimbot")
-uiRegistry["Aimbot"] = addCheckbox(gbAimbot, "Enable aimbot", Config.Aimbot, function(v) Config.Aimbot = v end)
-
-local gbSilent = createGroupbox(aimRight, "Silent Aim")
-uiRegistry["SilentAim"] = addCheckbox(gbSilent, "Enable silent aim", Config.SilentAim, function(v) Config.SilentAim = v end)
-
--- ESP
-local pageEsp = tabPages["esp"]
-local espLeft = pageEsp:FindFirstChild("LeftCol")
-local espRight = getRightCol(pageEsp)
-
-local gbEsp = createGroupbox(espLeft, "Player ESP")
-uiRegistry["ESP_Master"] = addCheckbox(gbEsp, "Enable ESP", Config.ESP_Master, function(v) Config.ESP_Master = v end)
-uiRegistry["ESP_EnemyOnly"] = addCheckbox(gbEsp, "Enemy only", Config.ESP_EnemyOnly, function(v) Config.ESP_EnemyOnly = v end)
-uiRegistry["ESP_Lobby"] = addCheckbox(gbEsp, "Show in lobby", Config.ESP_Lobby, function(v) Config.ESP_Lobby = v end)
-
--- MOVE
-local pageMove = tabPages["move"]
-local moveLeft = pageMove:FindFirstChild("LeftCol")
-local moveRight = getRightCol(pageMove)
-
-local gbMove = createGroupbox(moveLeft, "Ground Movement")
-uiRegistry["SpeedHack"] = addCheckbox(gbMove, "Speed hack", Config.SpeedHack, function(v) Config.SpeedHack = v end)
-
-local gbAir = createGroupbox(moveRight, "Flight & Collision")
-uiRegistry["FlyHack"] = addCheckbox(gbAir, "Fly hack", Config.FlyHack, function(v) Config.FlyHack = v end)
-uiRegistry["Noclip"] = addCheckbox(gbAir, "Noclip", Config.Noclip, function(v) Config.Noclip = v end)
-
--- GUNS
-local pageGuns = tabPages["guns"]
-local gunsLeft = pageGuns:FindFirstChild("LeftCol")
-local gunsRight = getRightCol(pageGuns)
-
-local gbGun = createGroupbox(gunsLeft, "Weapon Mechanics")
-uiRegistry["NoRecoil"] = addCheckbox(gbGun, "No recoil", Config.NoRecoil, function(v) Config.NoRecoil = v end)
-uiRegistry["NoSpread"] = addCheckbox(gbGun, "No spread", Config.NoSpread, function(v) Config.NoSpread = v end)
-
-local gbSkins = createGroupbox(gunsRight, "Cosmetics")
-uiRegistry["UnlockAllSkins"] = addCheckbox(gbSkins, "Unlock all (client)", Config.UnlockAllSkins, function(v) Config.UnlockAllSkins = v end)
-
--- WORLD
-local pageWorld = tabPages["world"]
-local worldLeft = pageWorld:FindFirstChild("LeftCol")
-local worldRight = getRightCol(pageWorld)
-
-local gbWorld = createGroupbox(worldLeft, "World")
-uiRegistry["Fullbright"] = addCheckbox(gbWorld, "Fullbright", Config.Fullbright, function(v) Config.Fullbright = v end)
-uiRegistry["NoFog"] = addCheckbox(gbWorld, "No fog", Config.NoFog, function(v) Config.NoFog = v end)
-
-local gbCam = createGroupbox(worldRight, "Camera")
-uiRegistry["ThirdPerson"] = addCheckbox(gbCam, "Third person", Config.ThirdPerson, function(v) Config.ThirdPerson = v end)
-uiRegistry["Freecam"] = addCheckbox(gbCam, "Freecam", Config.Freecam, function(v) Config.Freecam = v end)
-
--- CONFIG
-local pageConfig = tabPages["config"]
-local configLeft = pageConfig:FindFirstChild("LeftCol")
-local configRight = getRightCol(pageConfig)
-
-createGroupbox(configLeft, "Info",
-    "Standalone UI build.\nWire toggles to your own feature code.")
-
-local gbActions = createGroupbox(configRight, "Quick Actions")
-addButton(gbActions, "Close menu", function()
-    setMenuVisible(false)
-end)
-addButton(gbActions, "Unload UI", function()
-    UnloadScript()
-end)
-
--- ============================================================
--- SECTION 10: MOBILE TOGGLE + MENU KEY
--- ============================================================
-
-if isMobile then
-    local mobileGui = Instance.new("ScreenGui")
-    mobileGui.Name = "UnnamedWardMobileToggle"
-    mobileGui.ResetOnSpawn = false
-    mobileGui.IgnoreGuiInset = true
-    mobileGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    mobileGui.DisplayOrder = 2147482000
-    mobileGui.Parent = PlayerGui
-    table.insert(cleanUpInstances, mobileGui)
-
-    local toggleBtn = Instance.new("TextButton")
-    toggleBtn.Name = "ToggleBtn"
-    toggleBtn.Size = UDim2.new(0, 54, 0, 54)
-    toggleBtn.Position = UDim2.new(0, 14, 0.5, -27)
-    toggleBtn.BackgroundColor3 = Theme.AccentBlue
-    toggleBtn.BorderSizePixel = 0
-    toggleBtn.Text = "UW"
-    toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    toggleBtn.Font = MonoFont
-    toggleBtn.TextSize = 16
-    toggleBtn.AutoButtonColor = false
-    toggleBtn.ZIndex = 200
-    toggleBtn.Parent = mobileGui
-
-    local tStroke = Instance.new("UIStroke")
-    tStroke.Color = Theme.AccentPink
-    tStroke.Thickness = 1.5
-    tStroke.Parent = toggleBtn
-
-    local tCorner = Instance.new("UICorner")
-    tCorner.CornerRadius = UDim.new(1, 0)
-    tCorner.Parent = toggleBtn
-
-    toggleBtn.MouseButton1Click:Connect(function()
-        local isVis = getgenv and getgenv().UnnamedWardMenuVisible
-        if isVis == nil then isVis = mainWindow.Visible end
-        setMenuVisible(not isVis)
-    end)
-end
-
-setMenuVisible(true)
-
-trackConnection(UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed then return end
-    if input.KeyCode == Config.MenuKey then
-        local isVis = getgenv and getgenv().UnnamedWardMenuVisible
-        if isVis == nil then isVis = mainWindow.Visible end
-        setMenuVisible(not isVis)
-    end
-end))
-
--- ============================================================
--- STARTUP
--- ============================================================
-
-ShowNotification("UnnamedWard", "UI loaded. " .. (isMobile and "Tap UW to toggle." or ("Press " .. Config.MenuKey.Name .. " to toggle.")), "SUCCESS", 4)
+    elseif (minVal % 1 ~= 0) or (maxVal % 1 ~= 0) or (
