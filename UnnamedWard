@@ -164,7 +164,7 @@ local function getGuiParent()
 end
 
 -- ============================================================
--- PART 3: CONFIG TABLES (Textures / Sounds / Skyboxes)
+-- PART 3: CONFIG TABLES (Textures / Sounds)
 -- ============================================================
 do
     State.WeaponTextures = {
@@ -187,13 +187,6 @@ do
         Line = 'rbxassetid://9150663556',
         Beam = 'rbxassetid://9150663556',
         Neon = 'rbxassetid://1825953680',
-    }
-    State.Skyboxes = {
-        ['--'] = {},
-        Galaxy = {SkyboxBk = 'rbxassetid://159454299', SkyboxDn = 'rbxassetid://159454296', SkyboxFt = 'rbxassetid://159454293', SkyboxLf = 'rbxassetid://159454286', SkyboxRt = 'rbxassetid://159454300', SkyboxUp = 'rbxassetid://159454288'},
-        Nebula = {SkyboxBk = 'rbxassetid://159454299', SkyboxDn = 'rbxassetid://159454296', SkyboxFt = 'rbxassetid://159454293', SkyboxLf = 'rbxassetid://159454286', SkyboxRt = 'rbxassetid://159454300', SkyboxUp = 'rbxassetid://159454288'},
-        Sunset = {SkyboxBk = 'rbxassetid://3235725515', SkyboxDn = 'rbxassetid://3235725885', SkyboxFt = 'rbxassetid://3235726205', SkyboxLf = 'rbxassetid://3235726465', SkyboxRt = 'rbxassetid://3235726965', SkyboxUp = 'rbxassetid://3235725815'},
-        Night = {SkyboxBk = 'rbxassetid://4587962', SkyboxDn = 'rbxassetid://4587980', SkyboxFt = 'rbxassetid://4587990', SkyboxLf = 'rbxassetid://4587983', SkyboxRt = 'rbxassetid://4588009', SkyboxUp = 'rbxassetid://4587987'},
     }
 end
 
@@ -447,7 +440,7 @@ local Config = {
 
     Fullbright = false, NoFog = true, CustomFOV = false, FOVValue = 90,
     BulletTracers = false, TracerTexture = "Line", HitSound = "Skeet",
-    Skybox = "--", NoSmoke = false, TimeChanger = false, TimeValue = 14,
+    NoSmoke = false, TimeChanger = false, TimeValue = 14,
 
     ThirdPerson = false, ThirdPersonDist = 12, Freecam = false, FreecamSpeed = 40,
 
@@ -466,7 +459,6 @@ local Config = {
     Rage_AntiAim_Enabled = false, Rage_FakeDuck = false, Rage_YawBase = "Camera", Rage_SpinSpeed = 10,
 
     Exploit_KillAll = false, Exploit_AntiSpectate = false,
-
     ChatSpam = false, ChatSpamText = "UnnamedWard on top!",
 
     ThemeAccent = "Pink", ThemeCustomColor = Color3.fromRGB(255, 160, 195),
@@ -645,15 +637,10 @@ local function ShowNotification(title, message, notifType, duration)
         notifType = notifType or "INFO"
         local barColor = Theme.AccentPink
         if notifType == "SUCCESS" then barColor = Theme.Green
-        elseif notifType == "WARN" then barColor = Theme.Yellow
-        elseif notifType == "ERROR" then barColor = Theme.Red end
+        elseif notifType == "WARN" then barColor = Theme.Yellow        elseif notifType == "ERROR" then barColor = Theme.Red end
         local card = Instance.new("Frame")
-        card.Size = UDim2.new(1, 0, 0, 0)
-        card.BackgroundColor3 = Theme.CardBg
-        card.BorderSizePixel = 0
-        card.ClipsDescendants = true
-        card.ZIndex = 101
-        card.Parent = notifContainer
+        card.Size = UDim2.new(1, 0, 0, 0); card.BackgroundColor3 = Theme.CardBg
+        card.BorderSizePixel = 0; card.ClipsDescendants = true; card.ZIndex = 101; card.Parent = notifContainer
         local stroke = Instance.new("UIStroke"); stroke.Color = Theme.BorderPink; stroke.Thickness = 1; stroke.Parent = card
         local topAcc = Instance.new("Frame"); topAcc.Size = UDim2.new(1, 0, 0, 1.5); topAcc.BackgroundColor3 = barColor; topAcc.BorderSizePixel = 0; topAcc.ZIndex = 102; topAcc.Parent = card
         local tLbl = Instance.new("TextLabel"); tLbl.Size = UDim2.new(1, -14, 0, 15); tLbl.Position = UDim2.new(0, 8, 0, 3); tLbl.BackgroundTransparency = 1; tLbl.Font = MainFontBold; tLbl.Text = title; tLbl.TextColor3 = Theme.TextPink; tLbl.TextSize = 11.5; tLbl.TextXAlignment = Enum.TextXAlignment.Left; tLbl.ZIndex = 102; tLbl.Parent = card
@@ -1617,29 +1604,9 @@ do
 end
 
 -- ============================================================
--- PART 19: SKYBOX CHANGER
--- ============================================================
-local SkyboxManager = {}
-do
-    local currentSky = nil
-    function SkyboxManager.Set(name)
-        local data = State.Skyboxes[name]
-        if not data or not next(data) then
-            if currentSky then currentSky:Destroy(); currentSky = nil end
-            return
-        end
-        if currentSky then currentSky:Destroy() end
-        currentSky = Instance.new("Sky")
-        for k, v in pairs(data) do currentSky[k] = v end
-        currentSky.Parent = Lighting
-    end
-end
-
--- ============================================================
 -- PART 20: BOMB STATUS ESP
 -- ============================================================
 do
-    local centerX = Camera.ViewportSize.X / 2
     local barY = 160
     local barBg = Drawing.new("Square")
     barBg.Visible = false; barBg.Thickness = 1; barBg.Filled = true
@@ -1654,9 +1621,7 @@ do
     local bombStart = nil
     local debris = Workspace:FindFirstChild('Debris')
     if debris then
-        debris.ChildAdded:Connect(function(obj)
-            if obj.Name == 'PlantedC4' then bombStart = tick() end
-        end)
+        debris.ChildAdded:Connect(function(obj) if obj.Name == 'PlantedC4' then bombStart = tick() end end)
         debris.ChildRemoved:Connect(function(obj)
             if obj.Name == 'PlantedC4' then
                 bombStart = nil
@@ -1672,16 +1637,12 @@ do
         local pct = math.clamp(elapsed / total, 0, 1)
         local vp = Camera.ViewportSize
         local cx = vp.X / 2
-        barBg.Size = Vector2.new(300, 20)
-        barBg.Position = Vector2.new(cx - 150, barY)
-        barBg.Visible = true
-        barFill.Size = Vector2.new(300 * (1 - pct), 20)
-        barFill.Position = Vector2.new(cx - 150, barY)
+        barBg.Size = Vector2.new(300, 20); barBg.Position = Vector2.new(cx - 150, barY); barBg.Visible = true
+        barFill.Size = Vector2.new(300 * (1 - pct), 20); barFill.Position = Vector2.new(cx - 150, barY)
         barFill.Color = pct > 0.75 and Color3.fromRGB(255, 100, 100) or Theme.AccentPink
         barFill.Visible = true
         barText.Text = string.format("C4: %.1fs", math.max(0, total - elapsed))
-        barText.Position = Vector2.new(cx, barY + 25)
-        barText.Visible = true
+        barText.Position = Vector2.new(cx, barY + 25); barText.Visible = true
     end)
 end
 
@@ -1719,11 +1680,9 @@ do
         pcall(function()
             if not pos then return end
             local part = Instance.new("Part")
-            part.Size = Vector3.new(0.2, 0.2, 0.2)
-            part.Position = pos
+            part.Size = Vector3.new(0.2, 0.2, 0.2); part.Position = pos
             part.Anchored = true; part.CanCollide = false
-            part.Material = Enum.Material.Neon
-            part.Color = color or Theme.AccentPink
+            part.Material = Enum.Material.Neon; part.Color = color or Theme.AccentPink
             part.Parent = Workspace.Terrain
             task.delay(0.6, function() if part.Parent then part:Destroy() end end)
         end)
@@ -1786,7 +1745,7 @@ do
 end
 
 -- ============================================================
--- PART 26: THROWABLES INIT (Laser Mines)
+-- PART 26: THROWABLES AUTO-INIT
 -- ============================================================
 do
     task.spawn(function()
@@ -2024,7 +1983,7 @@ uiRegistry["ViewModelFOVValue"] = addSlider(gbViewModel, "Viewmodel FOV", 50, 11
 uiRegistry["HideViewModel"] = addCheckbox(gbViewModel, "Hide viewmodel", Config.HideViewModel, function(v) Config.HideViewModel = v end)
 
 -- ============================================================
--- WORLD TAB
+-- WORLD TAB (Skybox removed)
 -- ============================================================
 local pageWorld = tabPages["world"]
 local worldLeft = pageWorld:FindFirstChild("LeftCol")
@@ -2051,9 +2010,6 @@ uiRegistry["TimeChanger"] = addCheckbox(gbWorldMods, "Time Changer", Config.Time
 uiRegistry["TimeValue"] = addSlider(gbWorldMods, "Time of Day", 0, 24, Config.TimeValue, "%d h", function(v)
     Config.TimeValue = v
     if Config.TimeChanger then Lighting.ClockTime = v end
-end)
-uiRegistry["Skybox"] = addDropdown(gbWorldMods, "Skybox", {"--", "Galaxy", "Nebula", "Sunset", "Night"}, 1, function(v)
-    Config.Skybox = v; SkyboxManager.Set(v)
 end)
 
 local gbWorldAudio = createGroupbox(worldRight, "Effects & Sounds")
@@ -2219,13 +2175,12 @@ table.insert(activeConnections, RunService.Stepped:Connect(function(_, dt)
 end))
 
 -- ============================================================
--- PART 27/28: MAIN LOOPS (PreRender + Heartbeat)
+-- PART 27/28: MAIN LOOPS
 -- ============================================================
 table.insert(activeConnections, RunService.RenderStepped:Connect(function(dt)
     if not isRunning then return end
 
     pcall(function()
-        -- FOV circle
         if RageCore.FOVCircle then
             local vp = Camera.ViewportSize
             local mousePos = UserInputService:GetMouseLocation()
@@ -2236,7 +2191,6 @@ table.insert(activeConnections, RunService.RenderStepped:Connect(function(dt)
             RageCore.FOVCircle.Color = Theme.AccentPink
         end
 
-        -- Triggerbot
         if Config.Legit_Triggerbot_Enabled then
             local isHeld = false
             if Config.Legit_Triggerbot_Mode == "Hold" then
@@ -2251,7 +2205,6 @@ table.insert(activeConnections, RunService.RenderStepped:Connect(function(dt)
             end
         end
 
-        -- Ambient / Lighting / Skybox / Time
         if Config.Fullbright then
             Lighting.Brightness = 2; Lighting.ClockTime = 14
             Lighting.GlobalShadows = false; Lighting.OutdoorAmbient = Color3.fromRGB(150, 150, 150)
@@ -2268,7 +2221,6 @@ table.insert(activeConnections, RunService.RenderStepped:Connect(function(dt)
         end
         if Config.TimeChanger then Lighting.ClockTime = Config.TimeValue end
 
-        -- Weapon visuals
         local vmFolder = Workspace:FindFirstChild("ViewModels") or Camera
         if vmFolder and (Config.RainbowGunSkin or Config.HideViewModel or Config.WeaponChams) then
             local fpModel = vmFolder:FindFirstChild("FirstPerson") or vmFolder
@@ -2287,7 +2239,6 @@ table.insert(activeConnections, RunService.RenderStepped:Connect(function(dt)
             end
         end
 
-        -- ESP
         if not Config.ESP_Master then
             for _, esp in pairs(espObjects) do hideESP(esp) end
             if espLivePreview then espLivePreview.frame.Visible = false end
@@ -2370,7 +2321,6 @@ end))
 table.insert(activeConnections, RunService.Heartbeat:Connect(function(dt)
     if not isRunning then return end
 
-    -- Anti-Aim
     local char = LocalPlayer.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
     if Config.Rage_AntiAim_Enabled and root then
@@ -2383,7 +2333,6 @@ table.insert(activeConnections, RunService.Heartbeat:Connect(function(dt)
         end
     end
 
-    -- Movement
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if hum and root then
         if Config.SpeedHack then
@@ -2420,12 +2369,10 @@ table.insert(activeConnections, RunService.Heartbeat:Connect(function(dt)
         end
     end
 
-    -- Kill All
     if Config.Exploit_KillAll then
         pcall(KillManager.KillAll)
     end
 
-    -- Chat Spam
     if Config.ChatSpam then
         pcall(function()
             local chatEvent = ReplicatedStorage:FindFirstChild("DefaultChatSystemChatEvents")
@@ -2443,11 +2390,9 @@ table.insert(cleanUpInstances, {
 })
 
 -- ============================================================
--- PART 30: LOAD NOTIFICATION + UNSUPPORTED WARNINGS
+-- LOAD NOTIFICATION + UNSUPPORTED WARNINGS
 -- ============================================================
-ShowNotification("UnnamedWard",
-    string.format("Loaded in %.4f seconds", os.clock() - a),
-    "SUCCESS", 5)
+ShowNotification("UnnamedWard", string.format("Loaded in %.4f seconds", os.clock() - a), "SUCCESS", 5)
 
 do
     local missing = {}
@@ -2458,9 +2403,7 @@ do
     if not State.Client.HasGetsenv then table.insert(missing, 'getsenv') end
     if not State.Client.FullGetsenv then table.insert(missing, 'getsenv (not fully supported)') end
     if #missing > 0 then
-        ShowNotification("UnnamedWard",
-            "Your exploit doesn't support: " .. table.concat(missing, ', '),
-            "WARN", 12)
+        ShowNotification("UnnamedWard", "Your exploit doesn't support: " .. table.concat(missing, ', '), "WARN", 12)
     end
 end
 
