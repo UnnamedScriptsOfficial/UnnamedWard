@@ -43,15 +43,12 @@ local function resolveHttpGet()
             return nil
         end
     end
-    local ok, httpGet = pcall(function() return game.HttpGet end)
-    if ok and type(httpGet) == "function" then
-        return function(url)
-            local ok2, res = pcall(function() return game:HttpGet(url) end)
-            if ok2 and type(res) == "string" then return res end
-            return nil
-        end
+    -- Always fall back to game:HttpGet
+    return function(url)
+        local ok, res = pcall(function() return game:HttpGet(url) end)
+        if ok and type(res) == "string" then return res end
+        return nil
     end
-    return nil
 end
 
 local HttpGet = resolveHttpGet()
@@ -68,7 +65,7 @@ local FREE_URL       = ctx.Free       or "https://raw.githubusercontent.com/Unna
 local DISCORD_INVITE = ctx.Discord    or "https://discord.gg/g7jj8F6suv"
 
 -- ============================================================
--- THEME — light pink + light blue (matches main script)
+-- THEME — light pink + light blue
 -- ============================================================
 
 local Theme = {
@@ -210,15 +207,13 @@ local function lookupKey(list, key)
 end
 
 -- ============================================================
--- VERIFY KEY — returns (valid, message, tier)
--- tier is ALWAYS exactly "PREMIUM", "FREE", or nil.
+-- VERIFY KEY
 -- ============================================================
 
 local function verifyKey(key)
     if not key or key == "" then return false, "No key provided", nil end
     if isBlacklisted(key) then return false, "This key has been blacklisted", nil end
 
-    -- 1. Check wishlist (premium)
     local wishlist = getWishlist()
     local wlEntry = lookupKey(wishlist, key)
     if wlEntry then
@@ -230,7 +225,6 @@ local function verifyKey(key)
         return true, tostring(dur), "PREMIUM"
     end
 
-    -- 2. Check free list
     local freeList = getFreeList()
     local frEntry = lookupKey(freeList, key)
     if frEntry then
@@ -242,7 +236,6 @@ local function verifyKey(key)
         return true, tostring(dur), "FREE"
     end
 
-    -- 3. Neither list reachable
     if not wishlist and not freeList then
         return false, "Could not reach key server. Check your connection.", nil
     end
@@ -252,6 +245,11 @@ end
 -- ============================================================
 -- UI
 -- ============================================================
+
+local _existingGate = PlayerGui:FindFirstChild("UnnamedWardKeyGate")
+if _existingGate then
+    pcall(function() _existingGate:Destroy() end)
+end
 
 local gui = Instance.new("ScreenGui")
 gui.Name = "UnnamedWardKeyGate"
@@ -300,7 +298,6 @@ topLine.BorderSizePixel = 0
 topLine.ZIndex = 3
 topLine.Parent = panel
 
--- UW badge
 local titleBadge = Instance.new("Frame")
 titleBadge.Size = UDim2.new(0, 20, 0, 20)
 titleBadge.Position = UDim2.new(0, 10, 0, 12)
@@ -341,7 +338,6 @@ title.TextXAlignment = Enum.TextXAlignment.Left
 title.ZIndex = 3
 title.Parent = panel
 
--- Discord card
 local discordCard = Instance.new("Frame")
 discordCard.Size = UDim2.new(1, -20, 0, 62)
 discordCard.Position = UDim2.new(0, 10, 0, 42)
@@ -425,7 +421,6 @@ dLink.MouseButton1Click:Connect(function()
     end)
 end)
 
--- Key label + textbox
 local keyLabel = Instance.new("TextLabel")
 keyLabel.Size = UDim2.new(1, -20, 0, 14)
 keyLabel.Position = UDim2.new(0, 10, 0, 114)
@@ -492,6 +487,12 @@ keyBox:GetPropertyChangedSignal("Text"):Connect(function()
 
     if newText == censorString(raw) then return end
 
+    -- Full clear: user wiped the field entirely
+    if newText == "" and raw ~= "" then
+        keyBox:SetAttribute("RawKey", "")
+        return
+    end
+
     local bullets = select(2, newText:gsub("•", "•"))
     local rawBullets = select(2, censorString(raw):gsub("•", "•"))
     if bullets > rawBullets then
@@ -519,7 +520,6 @@ end)
 keyBox.Focused:Connect(function() kStroke.Color = Theme.BorderPink end)
 keyBox.FocusLost:Connect(function() kStroke.Color = Theme.BorderCard end)
 
--- Start with empty input. No auto-fill.
 setRawKey("")
 
 -- Status label
@@ -605,7 +605,7 @@ hintLbl.ZIndex = 3
 hintLbl.Parent = panel
 
 -- ============================================================
--- LOGIC — user must enter a key manually
+-- LOGIC
 -- ============================================================
 
 local verifying = false
@@ -717,7 +717,3 @@ quit.MouseLeave:Connect(function()
     qStroke.Color = Theme.ButtonBorder
     quit.TextColor3 = Theme.TextMuted
 end)
-
--- ============================================================
--- NO AUTO-VERIFY. The user must enter a key manually.
--- ============================================================
