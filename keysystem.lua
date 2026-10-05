@@ -1,26 +1,27 @@
 -- ============================================================
--- keysystem.lua - Self-contained key gate
+-- keysystem.lua - Self-contained key gate (shape-agnostic)
 -- Publishes:
 --   getgenv().UnnamedWardKeyVerified = true|false
 --   getgenv().UnnamedWardTier        = "FREE"|"PREMIUM"
 --   getgenv().UnnamedWardGateClosed  = true|false
--- Reads (optional):
---   getgenv().UnnamedWardGateCtx = { Wishlist, Blacklist, Free, Discord, PlayerGui, isMobile, Theme, MainFont }
 -- ============================================================
 
 -- ============================================================
--- FALLBACKS (so this file works even if nothing else was published)
+-- SERVICES
 -- ============================================================
-local Services   = game:GetService("Players")
+local Players      = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
-local UIS        = game:GetService("UserInputService")
-local HttpService= game:GetService("HttpService")
-local CoreGui    = game:GetService("CoreGui")
-local LocalPlayer= Services.LocalPlayer
+local UIS          = game:GetService("UserInputService")
+local HttpService  = game:GetService("HttpService")
+local CoreGui      = game:GetService("CoreGui")
+local LocalPlayer  = Players.LocalPlayer
 
+-- ============================================================
+-- SAFE HELPERS
+-- ============================================================
 local function safeHttp(url)
-    local ok, res = pcall(function() return game:HttpGet(url) end)
-    if ok then return res end
+    local ok, res = pcall(function() return game:HttpGet(url, true) end)
+    if ok and type(res) == "string" and #res > 0 then return res end
     return nil
 end
 
@@ -38,8 +39,66 @@ local function getGuiParentFallback()
     return CoreGui
 end
 
-local GateCtx = getgenv().UnnamedWardGateCtx or {}
-local PlayerGui = GateCtx.PlayerGui or (LocalPlayer:FindFirstChild("PlayerGui"))
+local function norm(s)
+    if type(s) ~= "string" then return nil end
+    s = s:gsub("^%s+", ""):gsub("%s+$", "")
+    return s
+end
+
+-- Recursively collect every string that appears in a JSON value
+-- (handles arrays of strings, arrays of objects, nested objects, etc.)
+local function collectStrings(value, out, depth)
+    out = out or {}
+    depth = (depth or 0) + 1
+    if depth > 10 then return out end
+    if type(value) == "string" then
+        table.insert(out, value)
+    elseif type(value) == "table" then
+        for k, v in pairs(value) do
+            if type(k) == "string" then table.insert(out, k) end
+            collectStrings(v, out, depth)
+        end
+    end
+    return out
+end
+
+-- Returns true if `wanted` appears anywhere in the JSON served by `url`
+local function jsonHasKey(url, wanted)
+    local wantedNorm = norm(wanted)
+    if not wantedNorm or wantedNorm == "" then return false end
+
+    local raw = safeHttp(url)
+    if not raw then
+        warn("[UnnamedWard] Failed to fetch: " .. tostring(url))
+        return false
+    end
+
+    local data = decodeJson(raw)
+    if not data then
+        warn("[UnnamedWard] Failed to decode JSON from: " .. tostring(url))
+        warn("[UnnamedWard] First 200 chars: " .. raw:sub(1, 200))
+        return false
+    end
+
+    if type(data) == "string" then
+        return norm(data) == wantedNorm
+    end
+
+    if type(data) == "table" then
+        local all = collectStrings(data)
+        for _, s in ipairs(all) do
+            if norm(s) == wantedNorm then return true end
+        end
+    end
+
+    return false
+end
+
+-- ============================================================
+-- CONTEXT / THEME FALLBACKS
+-- ============================================================
+local GateCtx   = getgenv().UnnamedWardGateCtx or {}
+local PlayerGui = GateCtx.PlayerGui or LocalPlayer:FindFirstChild("PlayerGui")
 local isMobile  = GateCtx.isMobile or (UIS.TouchEnabled and not UIS.KeyboardEnabled and not UIS.MouseEnabled)
 
 local Theme = GateCtx.Theme or {
@@ -64,10 +123,10 @@ local Theme = GateCtx.Theme or {
 local MainFont     = GateCtx.MainFont or Enum.Font.GothamMedium
 local MainFontBold = Enum.Font.GothamBold
 
-local WISHLIST_URL   = GateCtx.Wishlist or "https://raw.githubusercontent.com/UnnamedScriptsOfficial/UnnamedWard/main/wishlist.json"
-local BLACKLIST_URL  = GateCtx.Blacklist or "https://raw.githubusercontent.com/UnnamedScriptsOfficial/UnnamedWard/main/blacklist.json"
-local FREE_URL       = GateCtx.Free or "https://raw.githubusercontent.com/UnnamedScriptsOfficial/UnnamedWard/refs/heads/main/free.json"
-local DISCORD_INVITE = GateCtx.Discord or "https://discord.gg/g7jj8F6suv"
+local WISHLIST_URL   = GateCtx.Wishlist  or "https://raw.githubusercontent.com/UnnamedScriptsOfficial/UnnamedWard/refs/heads/main/wishlist.json"
+local BLACKLIST_URL  = GateCtx.Blacklist or "https://raw.githubusercontent.com/UnnamedScriptsOfficial/UnnamedWard/refs/heads/main/blacklist.json"
+local FREE_URL       = GateCtx.Free      or "https://raw.githubusercontent.com/UnnamedScriptsOfficial/UnnamedWard/refs/heads/main/free.json"
+local DISCORD_INVITE = GateCtx.Discord   or "https://discord.gg/g7jj8F6suv"
 
 -- ============================================================
 -- STATE
@@ -78,8 +137,8 @@ getgenv().UnnamedWardTier        = "FREE"
 getgenv().UnnamedWardGateClosed  = false
 
 local function closeGate(tier)
-    getgenv().UnnamedWardTier       = tier or "FREE"
-    getgenv().UnnamedWardPremium    = (getgenv().UnnamedWardTier == "PREMIUM")
+    getgenv().UnnamedWardTier        = tier or "FREE"
+    getgenv().UnnamedWardPremium     = (getgenv().UnnamedWardTier == "PREMIUM")
     getgenv().UnnamedWardKeyVerified = true
     getgenv().UnnamedWardGateClosed  = true
     if getgenv().UnnamedWardGateCtx then
@@ -117,8 +176,8 @@ backdrop.ZIndex = 1
 backdrop.Parent = gui
 
 local win = Instance.new("Frame")
-win.Size = UDim2.new(0, isMobile and 300 or 340, 0, 260)
-win.Position = UDim2.new(0.5, isMobile and -150 or -170, 0.5, -130)
+win.Size = UDim2.new(0, isMobile and 300 or 340, 0, 270)
+win.Position = UDim2.new(0.5, isMobile and -150 or -170, 0.5, -135)
 win.BackgroundColor3 = Theme.WindowBg
 win.BorderSizePixel = 0
 win.Active = true
@@ -136,7 +195,7 @@ title.BackgroundColor3 = Theme.HeaderBg
 title.BorderSizePixel = 0
 title.Font = MainFontBold
 title.RichText = true
-title.Text = '<font color="#ffa0c3">Unnamed</font><font color="#96cdff">Ward</font> <font color="#888894">— Key</font>'
+title.Text = '<font color="#ffa0c3">Unnamed</font><font color="#96cdff">Ward</font> <font color="#888894"> Key</font>'
 title.TextColor3 = Theme.TextWhite
 title.TextSize = 13
 title.ZIndex = 3
@@ -238,41 +297,8 @@ local function setStatus(txt, color)
 end
 
 -- ============================================================
--- VERIFY LOGIC (client-side list check; server would be better)
+-- VERIFY LOGIC
 -- ============================================================
-local function isPremiumKey(k)
-    if type(k) ~= "string" then return false end
-    local wishlist = safeHttp(WISHLIST_URL)
-    if wishlist then
-        local data = decodeJson(wishlist)
-        if type(data) == "table" then
-            for _, entry in ipairs(data) do
-                if type(entry) == "string" and entry == k then return true end
-                if type(entry) == "table" and entry.key == k then
-                    local t = tostring(entry.tier or "FREE"):upper()
-                    return t == "PREMIUM"
-                end
-            end
-        end
-    end
-    return false
-end
-
-local function isFreeKey(k)
-    if type(k) ~= "string" then return false end
-    local free = safeHttp(FREE_URL)
-    if free then
-        local data = decodeJson(free)
-        if type(data) == "table" then
-            for _, entry in ipairs(data) do
-                if type(entry) == "string" and entry == k then return true end
-                if type(entry) == "table" and entry.key == k then return true end
-            end
-        end
-    end
-    return false
-end
-
 local function doVerify()
     local k = keyBox.Text
     if not k or k == "" then
@@ -280,36 +306,33 @@ local function doVerify()
         return
     end
 
+    local trimmed = norm(k)
+    warn("[UnnamedWard] Entered key: [" .. tostring(trimmed) .. "] len=" .. tostring(#(trimmed or "")))
+
     setStatus("Checking...", Theme.TextBlue)
 
     task.spawn(function()
-        local blacklist = safeHttp(BLACKLIST_URL)
-        if blacklist then
-            local data = decodeJson(blacklist)
-            if type(data) == "table" then
-                for _, entry in ipairs(data) do
-                    if type(entry) == "string" and entry == k then
-                        setStatus("This key is blacklisted.", Theme.Red)
-                        return
-                    end
-                    if type(entry) == "table" and entry.key == k then
-                        setStatus("This key is blacklisted.", Theme.Red)
-                        return
-                    end
-                end
-            end
+        -- Blacklist
+        if jsonHasKey(BLACKLIST_URL, trimmed) then
+            setStatus("This key is blacklisted.", Theme.Red)
+            warn("[UnnamedWard] Key is blacklisted.")
+            return
         end
 
-        if isPremiumKey(k) then
+        -- Premium (wishlist)
+        if jsonHasKey(WISHLIST_URL, trimmed) then
             setStatus("Premium key accepted!", Theme.Green)
+            warn("[UnnamedWard] Premium key accepted.")
             task.wait(0.4)
             closeGate("PREMIUM")
             gui:Destroy()
             return
         end
 
-        if isFreeKey(k) then
+        -- Free
+        if jsonHasKey(FREE_URL, trimmed) then
             setStatus("Free key accepted!", Theme.Green)
+            warn("[UnnamedWard] Free key accepted.")
             task.wait(0.4)
             closeGate("FREE")
             gui:Destroy()
@@ -317,6 +340,7 @@ local function doVerify()
         end
 
         setStatus("Invalid key. Try again.", Theme.Red)
+        warn("[UnnamedWard] Key not found in wishlist or free list.")
     end)
 end
 
@@ -360,8 +384,7 @@ do
 end
 
 -- ============================================================
--- WATCHDOG: if the user closes the GUI without verifying,
--- mark the gate as closed so the loader doesn't hang.
+-- WATCHDOG: mark closed if window disappears without verifying
 -- ============================================================
 task.spawn(function()
     while gui and gui.Parent do
